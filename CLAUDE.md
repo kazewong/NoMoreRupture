@@ -49,7 +49,9 @@ Run all commands from `backend/`.
 
 ### Architecture (intended)
 
-`src/main.rs` is still the default `cargo new` stub. `Cargo.toml` already declares the target stack; build toward:
+**Current state (scaffold):** `src/main.rs` is a working Axum server implementing the frontend's full API contract (`/api/v1/auth/{google,dev,me,logout}`, `/api/v1/stats/{public,aggregate}`, `/api/v1/data/{measurement,injury}`). Storage is **in-memory** (`src/store.rs`, a `Db` type seeded with demo data on boot) — a deliberate placeholder for the Postgres layer; data does not persist across restarts. DTOs live in `src/models.rs` (serde `camelCase` to match the frontend). Session auth is a JWT in an HttpOnly cookie. **Dev login:** with `DEV_AUTH` on (default), `GET /api/v1/auth/google` skips Google and logs in a fixed "Dev Tester" athlete — set `DEV_AUTH=0` to disable. Config via env (`PORT`, `FRONTEND_URL`, `JWT_SECRET`, `DEV_AUTH`); see `backend/.env.example`. Real Google OAuth (start + callback) is still a TODO in `auth_start`.
+
+The **intended** target stack (build toward this):
 
 - **Web**: `axum` (+ `axum-extra`, `axum-macros`) with `tower`/`tower-http` (CORS for the SvelteKit origin, request size limits, static serving). Async on `tokio`.
 - **Database**: `sqlx` against **Postgres** with `chrono` types. No migrations exist yet — establish a `migrations/` dir and the schema (athletes, measurements, injury reports) as the first real backend work. Model schema around optional/nullable fields to match the privacy-first, partial-data reality.
@@ -58,3 +60,25 @@ Run all commands from `backend/`.
 - **Other**: `uuid` v4 for IDs, `serde`/`serde_json` for (de)serialization, `reqwest` for outbound calls, `tracing` for structured logs.
 
 Design the API surface to serve the frontend's needs: authenticating athletes via OAuth, accepting measurement and injury submissions (with most fields optional), and returning aggregate/anonymized statistics for the dashboard. Do not expose endpoints that return individuals' identifying data in aggregate views.
+
+## Roadmap — not yet implemented
+
+What exists today is an end-to-end scaffold (working dev auth, in-memory data, all pages wired). The work below is what remains; roughly ordered by priority. Keep this list current as items land.
+
+### Backend
+- **Postgres + sqlx persistence.** Replace the in-memory `Db` (`backend/src/store.rs`) with a real database. Create `backend/migrations/` and the schema (athletes, measurements, injury reports) modeled around nullable/optional fields. This unblocks everything else (data currently resets on restart). Keep the `Db` access boundary so handlers change minimally.
+- **Real Google OAuth.** Implement the actual flow in `auth_start` (authorize redirect with state/PKCE) plus a `GET /api/v1/auth/google/callback` that exchanges the code, looks up/creates the athlete, and sets the same session cookie. The `DEV_AUTH` bypass stays for local testing.
+- **`PATCH /api/v1/profile`** — persist athlete profile edits. The profile page form is built but its Save button is disabled pending this endpoint.
+- **`DELETE /api/v1/account`** — delete all of an athlete's contributed data. Required by the privacy-first commitment; the settings page has a disabled button waiting on it.
+- **Correlation analysis.** `Db::aggregate_stats` returns an empty `correlations` list. This is the scientific core (see README) — compute statistical signals relating strength metrics to injury occurrence over time.
+- **API docs.** Annotate handlers with `utoipa` and serve `utoipa-swagger-ui` (deps present, unused).
+- **Production hardening.** Request size limits (`tower-http`), input validation, and a production cookie config (`SameSite=None; Secure` for cross-site deployments — current `Lax` only works for same-site localhost).
+
+### Frontend
+- **Charts.** The dashboard renders injury trends as a table and correlation insights as placeholders; add a charting solution for the time-series and scatter views (no chart lib is installed yet).
+- **Wire the stubbed actions.** Profile Save → `PATCH /api/v1/profile`; data-deletion → `DELETE /api/v1/account` (both currently disabled buttons marked with `TODO`).
+- **Deployment adapter.** `@sveltejs/adapter-auto` can't detect a target; swap in a concrete adapter once the hosting platform is chosen.
+- **Tests.** Only the scaffold example tests exist (`src/lib/vitest-examples/`); add real coverage for the API client, auth/theme state, and key routes.
+
+### Product / research
+- **Annual analysis report** (README) — a periodic, deeper anonymized writeup beyond the live `/stats` page.
